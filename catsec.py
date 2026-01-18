@@ -1,10 +1,14 @@
-from langchain.docstore.document import Document
+from typing import List
+from langchain_core.documents import Document
+
+from cat import tool, hook, plugin, AgenticWorkflowTask, RecallSettings, UserMessage
 from cat.log import log
-from cat.mad_hatter.decorators import tool, hook, plugin
 import requests
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 import pickle
 from datetime import datetime, timedelta
+
+PICKLE_FILE = '/app/cat/data/catnesina_updates.pkl'
 
 
 def validate_threshold(value):
@@ -15,38 +19,23 @@ def validate_threshold(value):
 
 
 class MySettings(BaseModel):
-    episodic_memory_k: int = 2
-    episodic_memory_threshold: float = 0.3
-    declarative_memory_k: int = 10
-    declarative_memory_threshold: float = 0.4
-    procedural_memory_k: int = 3
-    procedural_memory_threshold: float = 0.1
+    k: int = 10
+    threshold: float = 0.4
+    last_n_history_messages: int = 10
     chunk_size: int = 256
     chunk_overlap: int = 128
     document_expiration_in_days: int = 1
 
-    @field_validator("episodic_memory_threshold")
+    @field_validator("threshold")
     @classmethod
-    def episodic_memory_threshold_validator(cls, threshold):
-        if not validate_threshold(threshold):
-            raise ValueError("Episodic memory threshold must be between 0 and 1")
-
-    @field_validator("declarative_memory_threshold")
-    @classmethod
-    def declarative_memory_threshold_validator(cls, threshold):
+    def threshold_validator(cls, threshold):
         if not validate_threshold(threshold):
             raise ValueError("Declarative memory threshold must be between 0 and 1")
-
-    @field_validator("procedural_memory_threshold")
-    @classmethod
-    def procedural_memory_threshold_validator(cls, threshold):
-        if not validate_threshold(threshold):
-            raise ValueError("Procedural memory threshold must be between 0 and 1")
 
     @field_validator("document_expiration_in_days")
     @classmethod
     def document_expiration_in_days_threshold_validator(cls, threshold):
-        if threshold <=1 and threshold >=31:
+        if 1 >= threshold >= 31:
             raise ValueError("Document expiration threshold must be between 1 and 30")
 
 @plugin
@@ -281,8 +270,9 @@ mappatura_iso = {
 
 
 @hook
-def cat_recall_query(user_message, cat):
-    conversation_so_far  = cat.stringify_chat_history(latest_n=5)
+def before_cat_reads_message(user_message: UserMessage, cat):
+    conversation_so_far = [str(history_item) for history_item in cat.working_memory.history[-10:]]
+    conversation_so_far = "\n".join(conversation_so_far)
 
     prompt = f"""Here is a conversation between an AI and a Human:
 {conversation_so_far}
@@ -292,13 +282,17 @@ The sentence must be expressed from the point of view of the human. Beware of to
 
 Sentence: """
 
-    compressed_query = cat.llm(prompt)
-    print(f"@@@@@@@@@ {compressed_query}")
+    # prepare agent input
+    output = cat.agentic_workflow.run(
+        task=AgenticWorkflowTask(
+            system_prompt=prompt,
+            user_prompt=user_message.text,
+        ),
+        llm=cat.large_language_model,
+    )
 
-    return compressed_query
+    return output.output
 
-
-PICKLE_FILE = '/app/cat/data/catnesina_updates.pkl'
 
 def load_updates():
     try:
@@ -324,18 +318,21 @@ def is_older_than_1_day(stored_datetime):
 
 @tool
 def get_country_report(tool_input, cat):
-    """"Use this function whenever the user asks questions about vaccinations, consulates and embassies, visas, security, terrorism, environmental risks, local mobility, local laws, customs and currency formalities in a country or in a city.
-This function is useful to download the security and risks' country report from the right webpage.
-The input of this function is the country name, the only allowed country names are in the following list, ensure to use exactly the allowed string: ['Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Anguilla', 'Antigua e Barbuda', 'Arabia Saudita', 'Argentina', 'Armenia', 'Aruba', 'Australia', 'Austria', 'Azerbaigian', 'Bahamas', 'Bahrein', 'Bangladesh', 'Barbados', 'Belgio', 'Belize', 'Benin', 'Bermuda', 'Bhutan', 'Bielorussia', 'Bolivia', 'Bosnia-Erzegovina', 'Botswana', 'Brasile', 'Brunei', 'Bulgaria', 'Burkina Faso', 'Burundi', 'Cambogia', 'Camerun', 'Canada', 'Capo Verde', 'Ciad', 'Cile', 'Cipro', 'Colombia', 'Comore', 'Congo', "Costa d'Avorio", 'Costa Rica', 'Croazia', 'Cuba', 'Curacao', 'Danimarca', 'Dominica', 'Ecuador', 'Egitto', 'El Salvador', 'Emirati Arabi Uniti', 'Eritrea', 'Estonia', 'Etiopia', 'Federazione Russa', 'Figi', 'Filippine', 'Finlandia', 'Francia', 'Gabon', 'Gambia', 'Georgia', 'Germania', 'Ghana', 'Giamaica', 'Giappone', 'Gibilterra', 'Gibuti', 'Giordania', 'Grecia', 'Grenada', 'Guadalupa', 'Guam', 'Guatemala', 'Guinea', 'Guinea-Bissau', 'Guinea Equatoriale', 'Guyana', 'Guyana Francese', 'Haiti', 'Honduras', 'Hong Kong', 'India', 'Indonesia', 'Iran', 'Iraq', 'Irlanda', 'Islanda', 'Isole BES', 'Isole Cayman', 'Isole Cook', 'Isole Marianne Settentrionali', 'Isole Marshall', 'Isole Salomone', 'Isole Turks e Caicos', 'Isole Vergini Americane', 'Isole Vergini Britanniche', 'Israele', 'Kazakhstan', 'Kenya', 'Kirghizistan', 'Kiribati', 'Kosovo', 'Kuwait', 'Laos', 'Lesotho', 'Lettonia', 'Libano', 'Liberia', 'Libia', 'Liechtenstein', 'Lituania', 'Lussemburgo', 'Macao', 'Madagascar', 'Malawi', 'Malaysia', 'Maldive', 'Mali', 'Malta', 'Marocco', 'Martinica', 'Mauritania', 'Mauritius', 'Mayotte', 'Messico', 'Repubblica di Moldova', 'Monaco', 'Mongolia', 'Montenegro', 'Montserrat', 'Mozambico', 'Myanmar', 'Namibia', 'Nauru', 'Nepal', 'Nicaragua', 'Niger', 'Nigeria', 'Niue', 'Norvegia', 'Nuova Caledonia', 'Nuova Zelanda', 'Oman', 'Paesi Bassi', 'Pakistan', 'Panama', 'Papua Nuova Guinea', 'Paraguay', 'Perù', 'Polinesia Francese', 'Polonia', 'Portogallo', 'Qatar', 'Regno di Eswatini', 'Regno Unito', 'Repubblica Ceca', 'Repubblica Centrafricana', 'Repubblica Democratica del Congo', 'Repubblica Democratica di Timor Est', 'Repubblica di Corea (Corea del Sud)', 'Repubblica di Macedonia del Nord', 'Repubblica di Palau', 'Repubblica di Serbia', 'Repubblica Dominicana', 'Repubblica Popolare Cinese', 'Repubblica Popolare Democratica di Corea', 'Reunion', 'Romania', 'Ruanda', 'Saint Kitts e Nevis', 'Saint Lucia', 'Saint Vincent e Grenadine', 'Saint-Martin', 'Samoa', 'Samoa Americane', 'San Marino', 'Sao Tomé e Principe', 'Senegal', 'Seychelles', 'Sierra Leone', 'Singapore', 'Sint Maarten', 'Siria', 'Slovacchia', 'Slovenia', 'Somalia', 'Spagna', 'Sri Lanka', 'Stati Federati di Micronesia', "Stati Uniti d'America", 'Sudafrica', 'Sud Sudan', 'Sudan', 'Suriname', 'Svezia', 'Svizzera', 'Tagikistan', 'Taiwan', 'Tanzania', 'Territori Palestinesi', 'Thailandia', 'Togo', 'Tonga', 'Trinidad e Tobago', 'Tunisia', 'Turchia', 'Turkmenistan', 'Tuvalu', 'Ucraina', 'Uganda', 'Ungheria', 'Uruguay', 'Uzbekistan', 'Vanuatu', 'Venezuela', 'Vietnam', 'Yemen', 'Zambia', 'Zimbabwe'].
-The output is always None."""
-
-
+    """"
+    Use this function whenever the user asks questions about vaccinations, consulates and embassies, visas, security,
+    terrorism, environmental risks, local mobility, local laws, customs, and currency formalities in a country or in a
+    city.
+    This function is useful to download the security and risks' country report from the right webpage.
+    The input of this function is the country name, the only allowed country names are in the following list, ensure to
+    use exactly the allowed string: e.g. ['Afghanistan', 'Albania',, ...]. The output is always None.
+    """
     if tool_input in updated_countries and not is_older_than_1_day(updated_countries[tool_input]):
-        return
+        return None
 
-
-    cat.send_ws_message(msg_type='chat', content=f"Sto andando a verificare sul sito della Farnesina le ultime informazioni disponibili. Attendi un momento.")
-
+    cat.send_ws_message(
+        msg_type="chat",
+        content=f"Sto andando a verificare sul sito della Farnesina le ultime informazioni disponibili. Attendi un momento.",
+    )
 
     url_pdf = f"https://www.viaggiaresicuri.it/schede_paese/pdf/{mappatura_iso[tool_input]}.pdf"
     download_path = f'/app/cat/plugins/catnesina/downloads/{tool_input}.pdf'
@@ -358,69 +355,33 @@ The output is always None."""
 
 @hook
 def agent_prompt_prefix(prefix, cat):
-    prefix = """Sei un consulente di un'importante società. Il tuo è un alto profilo orientato al business e alla compliance. Il tuo linguaggio è formale, e utilizzi gli elenchi puntati o numerati solo se strettamente necessario per la comprensione, altrimenti preferisci una forma discorsiva. Le tue risposte sono sempre complete, con attenzione al business, alla sicurezza fisica, agli obblighi di legge e alla compliance."""
-
-    return prefix
-
-
-@hook
-def before_cat_recalls_episodic_memories(default_episodic_recall_config, cat):
-    settings = cat.mad_hatter.get_plugin().load_settings()
-    default_episodic_recall_config["k"] = settings["episodic_memory_k"]
-    default_episodic_recall_config["threshold"] = settings["episodic_memory_threshold"]
-
-    return default_episodic_recall_config
-
-
-@hook
-def before_cat_recalls_declarative_memories(default_declarative_recall_config, cat):
-    settings = cat.mad_hatter.get_plugin().load_settings()
-    default_declarative_recall_config["k"] = settings["declarative_memory_k"]
-    default_declarative_recall_config["threshold"] = settings[
-        "declarative_memory_threshold"
-    ]
-
-    return default_declarative_recall_config
-
-
-@hook
-def before_cat_recalls_procedural_memories(default_procedural_recall_config, cat):
-    settings = cat.mad_hatter.get_plugin().load_settings()
-    default_procedural_recall_config["k"] = settings["procedural_memory_k"]
-    default_procedural_recall_config["threshold"] = settings[
-        "procedural_memory_threshold"
-    ]
-
-    return default_procedural_recall_config
+    return """Sei un consulente di un'importante società.
+Il tuo è un alto profilo orientato al business e alla compliance.
+Il tuo linguaggio è formale, e utilizzi gli elenchi puntati o numerati solo se strettamente necessario per la comprensione, altrimenti preferisci una forma discorsiva.
+Le tue risposte sono sempre complete, con attenzione al business, alla sicurezza fisica, agli obblighi di legge e alla compliance.
+"""
 
 
 @hook
 def agent_prompt_suffix(suffix, cat):
-    suffix = f"""ALWAYS answer in the same language used by the user. Call the user 'Viaggiatore'.
+    return """ALWAYS answer in the same language used by the user. Call the user 'Viaggiatore'.
 # Context
 
-{{episodic_memory}}
-
-{{declarative_memory}}
-
-{{tools_output}}
+{context}
 """
 
-    suffix += f"""
-## Conversation until now:"""
-
-    return suffix
 
 @hook
-def rabbithole_instantiates_splitter(text_splitter, cat):
+def before_cat_recalls_memories(config: RecallSettings, cat):
     settings = cat.mad_hatter.get_plugin().load_settings()
-    text_splitter._chunk_size = settings["chunk_size"]
-    text_splitter._chunk_overlap = settings["chunk_overlap"]
-    return text_splitter
+    config.k = settings["k"]
+    config.threshold = settings["threshold"]
+
+    return config
 
 
 @hook
-def before_rabbithole_stores_documents(docs, cat):
+def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[Document]:
     group_size = 5
 
     notification = f"Starting to summarize {len(docs)}",
@@ -446,12 +407,16 @@ def before_rabbithole_stores_documents(docs, cat):
         group = list(map(lambda d: d.page_content, group))
         text_to_summarize = "\n".join(group)
 
+        # prepare agent input
+        output = cat.agentic_workflow.run(
+            task=AgenticWorkflowTask(user_prompt=f"Write a concise summary of the following: {text_to_summarize}"),
+            llm=cat.large_language_model,
+        )
         # Summarize and add metadata
-        summary = cat.llm(f"Write a concise summary of the following: {text_to_summarize}")
-        summary = Document(page_content=summary)
+        summary = Document(page_content=output.output)
         summary.metadata["is_summary"] = True
 
-        # add summary to list of all summaries
+        # add the new summary to a list of all summaries
         all_summaries.append(summary)
 
     docs.extend(all_summaries)
