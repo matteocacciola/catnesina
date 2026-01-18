@@ -271,7 +271,13 @@ mappatura_iso = {
 
 @hook
 def before_cat_reads_message(user_message: UserMessage, cat):
-    conversation_so_far = [str(history_item) for history_item in cat.working_memory.history[-10:]]
+    settings = cat.mad_hatter.get_plugin().load_settings()
+    last_n_history_messages = settings.last_n_history_messages
+
+    conversation_so_far = [
+        f"{history_item.who}: {history_item.content.text}"
+        for history_item in cat.working_memory.history[-last_n_history_messages:]
+    ]
     conversation_so_far = "\n".join(conversation_so_far)
 
     prompt = f"""Here is a conversation between an AI and a Human:
