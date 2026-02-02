@@ -1,7 +1,7 @@
 from typing import List
 from langchain_core.documents import Document
 
-from cat import tool, hook, plugin, AgenticWorkflowTask, RecallSettings, UserMessage
+from cat import tool, hook, plugin, AgenticWorkflowTask, RecallSettings, UserMessage, StrayCat
 from cat.log import log
 import requests
 from pydantic import BaseModel, field_validator
@@ -318,27 +318,28 @@ def save_updates():
 
 def is_older_than_1_day(stored_datetime):
     value = stored_datetime < datetime.now() - timedelta(days=1)
-    print(f"VALUE: {value}")
+    log.debug(f"is_older_than_1_day: {value}")
     return value
 
 
 @tool
-def get_country_report(tool_input, cat):
+async def get_country_report(tool_input, cat):
     """"
     Use this function whenever the user asks questions about vaccinations, consulates and embassies, visas, security,
     terrorism, environmental risks, local mobility, local laws, customs, and currency formalities in a country or in a
     city.
     This function is useful to download the security and risks' country report from the right webpage.
     The input of this function is the country name, the only allowed country names are in the following list, ensure to
-    use exactly the allowed string: e.g. ['Afghanistan', 'Albania',, ...]. The output is always None.
+    use exactly the allowed string: e.g. ['Afghanistan', 'Albania', ...]. The output is always None.
     """
     if tool_input in updated_countries and not is_older_than_1_day(updated_countries[tool_input]):
         return None
 
-    cat.send_ws_message(
-        msg_type="chat",
-        content=f"Sto andando a verificare sul sito della Farnesina le ultime informazioni disponibili. Attendi un momento.",
-    )
+    if isinstance(cat, StrayCat):
+        await cat.notifier.send_ws_message(
+            msg_type="chat",
+            content=f"Sto andando a verificare sul sito della Farnesina le ultime informazioni disponibili. Attendi un momento.",
+        )
 
     url_pdf = f"https://www.viaggiaresicuri.it/schede_paese/pdf/{mappatura_iso[tool_input]}.pdf"
     download_path = f'/app/cat/plugins/catnesina/downloads/{tool_input}.pdf'
@@ -347,15 +348,15 @@ def get_country_report(tool_input, cat):
     if res.status_code == 200:
         with open(download_path, "wb") as file:
             file.write(res.content)
-            print(f"{tool_input}.pdf downloaded with success")
+            log.debug(f"{tool_input}.pdf downloaded with success")
         
-        cat.rabbit_hole.ingest_file(cat, download_path)
+        await cat.rabbit_hole.ingest_file(cat, download_path, metadata={"country": tool_input})
         updated_countries[tool_input] = datetime.now()
         save_updates()
     else:
-        print(f"Something was wrong, viaggiaresicuri.it returned HTTP {res.status_code}")
+        log.warning(f"Something was wrong, viaggiaresicuri.it returned HTTP {res.status_code}")
 
-    print(f"################ {tool_input}")
+    log.debug(f"################ {tool_input}")
     return tool_input
 
 
@@ -390,9 +391,10 @@ def before_cat_recalls_memories(config: RecallSettings, cat):
 async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[Document]:
     group_size = 5
 
-    notification = f"Starting to summarize {len(docs)}",
-    log(notification, "INFO")
-    await cat.send_ws_message(notification, msg_type="notification")
+    notification = f"Starting to summarize {len(docs)}"
+    log.info(notification)
+    if isinstance(cat, StrayCat):
+        await cat.notifier.send_ws_message(notification, msg_type="notification")
 
     # we will store iterative summaries all together in a list
     all_summaries = []
@@ -405,8 +407,10 @@ async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[
         # Notify the admin of the progress
         progress = (n * 100) // n_summaries
         message = f"{progress}% of summarization"
-        await cat.send_ws_message(message, msg_type="notification")
-        log(message, "INFO")
+        if isinstance(cat, StrayCat):
+            await cat.notifier.send_ws_message(message, msg_type="notification")
+
+        log.info(message)
 
         # Get the text from groups of docs and join to string
         group = docs[i: i + group_size]
@@ -414,7 +418,7 @@ async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[
         text_to_summarize = "\n".join(group)
 
         # prepare agent input
-        output = cat.agentic_workflow.run(
+        output = await cat.agentic_workflow.run(
             task=AgenticWorkflowTask(user_prompt=f"Write a concise summary of the following: {text_to_summarize}"),
             llm=cat.large_language_model,
         )
