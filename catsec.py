@@ -297,7 +297,7 @@ Sentence: """
         llm=cat.large_language_model,
     )
 
-    return output.output
+    return UserMessage(**user_message.model_dump() | {"text": output.output})
 
 
 def load_updates():
@@ -387,12 +387,12 @@ def before_cat_recalls_memories(config: RecallSettings, cat):
 
 
 @hook
-def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[Document]:
+async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[Document]:
     group_size = 5
 
     notification = f"Starting to summarize {len(docs)}",
     log(notification, "INFO")
-    cat.send_ws_message(notification, msg_type="notification")
+    await cat.send_ws_message(notification, msg_type="notification")
 
     # we will store iterative summaries all together in a list
     all_summaries = []
@@ -405,7 +405,7 @@ def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[Docume
         # Notify the admin of the progress
         progress = (n * 100) // n_summaries
         message = f"{progress}% of summarization"
-        cat.send_ws_message(message, msg_type="notification")
+        await cat.send_ws_message(message, msg_type="notification")
         log(message, "INFO")
 
         # Get the text from groups of docs and join to string
