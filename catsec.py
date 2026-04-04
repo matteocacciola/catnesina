@@ -270,8 +270,8 @@ mappatura_iso = {
 
 
 @hook
-def before_cat_reads_message(user_message: UserMessage, cat):
-    settings = cat.mad_hatter.get_plugin().load_settings()
+async def before_cat_reads_message(user_message: UserMessage, cat):
+    settings = await cat.mad_hatter.get_plugin().load_settings()
     last_n_history_messages = settings.last_n_history_messages
 
     conversation_so_far = [
@@ -289,12 +289,14 @@ The sentence must be expressed from the point of view of the human. Beware of to
 Sentence: """
 
     # prepare agent input
-    output = cat.agentic_workflow.run(
+    af = await cat.agentic_workflow()
+    llm = await cat.large_language_model()
+    output = await af.run(
         task=AgenticWorkflowTask(
             system_prompt=prompt,
             user_prompt=user_message.text,
         ),
-        llm=cat.large_language_model,
+        llm=llm,
     )
 
     return UserMessage(**user_message.model_dump() | {"text": output.output})
@@ -336,9 +338,8 @@ async def get_country_report(tool_input, cat):
         return None
 
     if isinstance(cat, StrayCat):
-        await cat.notifier.send_ws_message(
-            msg_type="chat",
-            content=f"Sto andando a verificare sul sito della Farnesina le ultime informazioni disponibili. Attendi un momento.",
+        await cat.notifier.send_chat_message(
+            "Sto andando a verificare sul sito della Farnesina le ultime informazioni disponibili. Attendi un momento.",
         )
 
     url_pdf = f"https://www.viaggiaresicuri.it/schede_paese/pdf/{mappatura_iso[tool_input]}.pdf"
@@ -379,8 +380,8 @@ def agent_prompt_suffix(suffix, cat):
 
 
 @hook
-def before_cat_recalls_memories(config: RecallSettings, cat):
-    settings = cat.mad_hatter.get_plugin().load_settings()
+async def before_cat_recalls_memories(config: RecallSettings, cat):
+    settings = await cat.mad_hatter.get_plugin().load_settings()
     config.k = settings["k"]
     config.threshold = settings["threshold"]
 
@@ -394,7 +395,7 @@ async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[
     notification = f"Starting to summarize {len(docs)}"
     log.info(notification)
     if isinstance(cat, StrayCat):
-        await cat.notifier.send_ws_message(notification, msg_type="notification")
+        await cat.notifier.send_notification(notification)
 
     # we will store iterative summaries all together in a list
     all_summaries = []
@@ -408,7 +409,7 @@ async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[
         progress = (n * 100) // n_summaries
         message = f"{progress}% of summarization"
         if isinstance(cat, StrayCat):
-            await cat.notifier.send_ws_message(message, msg_type="notification")
+            await cat.notifier.send_notification(message)
 
         log.info(message)
 
@@ -418,9 +419,11 @@ async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[
         text_to_summarize = "\n".join(group)
 
         # prepare agent input
-        output = await cat.agentic_workflow.run(
+        af = await cat.agentic_workflow()
+        llm = await cat.large_language_model()
+        output = await af.run(
             task=AgenticWorkflowTask(user_prompt=f"Write a concise summary of the following: {text_to_summarize}"),
-            llm=cat.large_language_model,
+            llm=llm,
         )
         # Summarize and add metadata
         summary = Document(page_content=output.output)
