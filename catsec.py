@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from typing import List
 from langchain_core.documents import Document
 
@@ -5,10 +7,9 @@ from cat import tool, hook, plugin, AgenticWorkflowTask, RecallSettings, UserMes
 from cat.log import log
 import requests
 from pydantic import BaseModel, field_validator
-import pickle
 from datetime import datetime, timedelta
 
-PICKLE_FILE = '/app/cat/data/catnesina_updates.pkl'
+PICKLE_FILE = '/app/cat/data/catnesina_updates.json'
 
 
 def validate_threshold(value):
@@ -304,8 +305,8 @@ Sentence: """
 
 def load_updates():
     try:
-        with open(PICKLE_FILE, 'rb') as f:
-            return pickle.load(f)
+        file_content = Path(PICKLE_FILE).read_text()
+        return json.loads(file_content)
     except FileNotFoundError:
         return {}
 
@@ -314,8 +315,7 @@ updated_countries = load_updates()
 
 
 def save_updates():
-    with open(PICKLE_FILE, 'wb') as f:
-        pickle.dump(updated_countries, f)
+    Path(PICKLE_FILE).write_text(json.dumps(updated_countries))
 
 
 def is_older_than_1_day(stored_datetime):
@@ -347,9 +347,9 @@ async def get_country_report(tool_input, cat):
 
     res = requests.get(url_pdf)
     if res.status_code == 200:
-        with open(download_path, "wb") as file:
-            file.write(res.content)
-            log.debug(f"{tool_input}.pdf downloaded with success")
+        Path(download_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(download_path).write_bytes(res.content)
+        log.debug(f"{tool_input}.pdf downloaded with success")
         
         await cat.rabbit_hole.ingest_file(cat, download_path, metadata={"country": tool_input})
         updated_countries[tool_input] = datetime.now()
