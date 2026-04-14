@@ -290,14 +290,12 @@ The sentence must be expressed from the point of view of the human. Beware of to
 Sentence: """
 
     # prepare agent input
-    af = await cat.agentic_workflow()
-    llm = await cat.large_language_model()
-    output = await af.run(
+    output = await cat.agentic_workflow.run(
         task=AgenticWorkflowTask(
             system_prompt=prompt,
             user_prompt=user_message.text,
         ),
-        llm=llm,
+        llm=cat.large_language_model,
     )
 
     return UserMessage(**user_message.model_dump() | {"text": output.output})
@@ -339,7 +337,7 @@ async def get_country_report(tool_input, cat):
 
     if isinstance(cat, StrayCat):
         await cat.notifier.send_chat_message(
-            "Sto andando a verificare sul sito della Farnesina le ultime informazioni disponibili. Attendi un momento.",
+            "I am going to check the last available information within the Farnesina website. Please, hold on.",
         )
 
     url_pdf = f"https://www.viaggiaresicuri.it/schede_paese/pdf/{mappatura_iso[tool_input]}.pdf"
@@ -419,11 +417,9 @@ async def before_rabbithole_stores_documents(docs: List[Document], cat) -> List[
         text_to_summarize = "\n".join(group)
 
         # prepare agent input
-        af = await cat.agentic_workflow()
-        llm = await cat.large_language_model()
-        output = await af.run(
+        output = await cat.agentic_workflow.run(
             task=AgenticWorkflowTask(user_prompt=f"Write a concise summary of the following: {text_to_summarize}"),
-            llm=llm,
+            llm=cat.large_language_model,
         )
         # Summarize and add metadata
         summary = Document(page_content=output.output)
